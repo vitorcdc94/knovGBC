@@ -1,55 +1,103 @@
-# Prerequisites
-*.d
+# Generated outputs, installed SDK and publication staging.
+/build/
+/dist/
+/tmp/
+/toolchain/
+/publication/
+/.toolchain-src/
+/tools/tests/picogb_build/
+/.app-build.*
+/.toolchain-build.*
+/.yaul-build.*
 
-# Object files
-*.o
-*.ko
-*.obj
+# Private cartridges and save data.
+/roms/**
+!/roms/.gitkeep
+*.gb
+*.gbc
+*.gba
+*.nds
+*.sfc
+*.smc
+*.nes
+*.sav
+*.srm
+
+# Compiled products and downloaded archives.
+*.bin
+*.cue
+*.iso
 *.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
+*.o
 *.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
 *.so
-*.so.*
-*.dylib
-
-# Executables
+*.dll
 *.exe
 *.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+*.map
+*.d
+*.pyc
+__pycache__/
+*.log
+*.status
+*.tar
+*.tar.gz
+*.tar.xz
+*.tgz
+*.zip
+*.7z
+*.rar
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# Explicitly reviewed SameBoy-source boot binaries, not Nintendo dumps.
+!/src/saturn/bootroms/dmg_boot.bin
+!/src/saturn/bootroms/cgb_boot_fast.bin
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Upstream build products, nested metadata and withheld references.
+third_party/**/.git/
+third_party/**/build/
+third_party/**/.build/
+third_party/**/autom4te.cache/
+third_party/**/.deps/
+third_party/**/.libs/
+third_party/**/config.log
+third_party/**/config.status
+/third_party/crosstool-ng-1.28.0/
+/third_party/libyaul-build-scripts/
+/third_party/rgbds-1.0.3/
+/third_party/saroo-reference/
+/third_party/libyaul/libyaul/ip/blobs/
+/third_party/SameBoy/.github/actions/
+/third_party/SameBoy/iOS/
+/third_party/SameBoy/HexFiend/
+/third_party/Peanut-GB/test/cpu_instrs.h
+/third_party/Peanut-GB/test/instr_timing.h
+/third_party/Peanut-GB/test/dmg-acid2.gb.h
+/third_party/Peanut-GB/screencaps/
+/third_party/Peanut-GB/examples/mini_fb/
+/third_party/SCSP_poneSound/m68k-elf/
+/third_party/SCSP_poneSound/jo_demo/
+/third_party/SCSP_poneSound/jo_cdda_demo/
+/third_party/SCSP_poneSound/jo_stream_demo/
+/third_party/libyaul/.images/
+*.wav
+*.mp3
+*.adx
+*.pcm
+*.mov
+*.mp4
+*.jpg
+*.jpeg
 
-# debug information files
-*.dwo
+# Workstation and credential files. Ignoring is not deletion or secret proof.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

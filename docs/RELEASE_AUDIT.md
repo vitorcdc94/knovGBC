@@ -165,3 +165,40 @@ The publication checker does not establish ownership, provide a legal opinion,
 or guarantee absence of every secret or copyrighted byte sequence. Keep all
 included license and attribution files. Do not publish commercial ROMs, old
 game BIN/CUE releases, Sega security blobs or private staging/backup folders.
+
+## Post-publication line-ending correction: 2026-10-10
+
+A read-only comparison of the published tree against the prepared copy found
+the same 1,206 paths: 247 files were byte-identical and 959 differed only by
+CRLF-to-LF normalization. No content differences remained after that byte-pair
+replacement. The old raw-only manifest checker could therefore report false
+failures on a Linux checkout even though the source content was unchanged.
+
+The correction is limited to publication tooling, documentation and inventory.
+Original-source hashes are preserved. Raw exported hashes and sizes remain;
+eligible text entries additionally carry an explicit CRLF-to-LF hash and size.
+The verifier accepts that narrowly defined equivalence, not arbitrary whitespace
+or encoding changes. Binary assets and NUL-containing inputs stay byte-exact.
+The exporter uses the same read-only fingerprint helper for future source copies.
+No emulator source, dependency source, license text or build mode was changed.
+
+The synthetic PowerShell regression suite passed 36 assertions. It accepted
+raw, LF, CRLF and mixed text line endings while rejecting same-size text edits,
+extra spaces/newlines, lone CR removal, UTF-8 BOM changes, missing/unlisted files,
+forbidden cartridge extensions, disguised ELF content and changed open boot
+bytes. Legacy manifests without explicit text fingerprints remain raw-only.
+The test requires no cartridge ROM, SDK or network access.
+
+The full inventory passed on the prepared copy, on two temporary checkouts made
+by Git with `core.autocrlf=false` and `core.autocrlf=true`, and on a fresh isolated
+export. Git staged all 1,208 expected paths; both checkout tests accepted 764
+text files through the explicit EOL comparison while keeping binary inputs
+exact. The 36-assertion regression suite also passed from both checkouts.
+The four new/changed PowerShell scripts parsed successfully. These Git fixtures
+had no commits or remotes; no existing history or online repository was changed.
+
+The updated source copy contains 1,208 files: 1,207 manifested source/input
+files and the manifest itself. The two new files are the shared fingerprint
+helper and its isolated regression tests. These changes do not require a new
+game build or a Saturn hardware test. See `PUBLICATION.md` for the seven-file
+GitHub Desktop update procedure; earlier commits are kept intact.

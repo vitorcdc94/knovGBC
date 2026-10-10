@@ -24,6 +24,30 @@ certify copyright ownership, detect every possible secret, compile the emulator,
 or validate Saturn behavior. A PASS is a scoped inventory result, not legal
 clearance. Update the manifest honestly after any further source-copy edits.
 
+### Windows/Linux line endings
+
+Git can convert text from Windows CRLF to Linux LF on commit or checkout.
+The manifest retains its original-source hashes and raw exported hashes/sizes.
+Reviewed text entries additionally record `canonical_eol: crlf-to-lf-v1`, a
+SHA-256 and a byte count after replacing only CRLF pairs with LF. The checker
+accepts either an exact raw match or that explicitly recorded text match.
+It does not trim spaces, change encoding, remove a BOM, remove lone CR bytes,
+or ignore added/removed lines. Binary assets and NUL-containing files require
+exact bytes. An older manifest without these extra fields remains raw-only;
+the checker never guesses its missing expected content.
+
+Run the isolated regression tests with Windows PowerShell:
+
+~~~powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\tests\publication_line_endings_test.ps1
+~~~
+
+This test creates and removes only its own unique temporary fixture directory.
+It does not require a commercial ROM or SDK, change source files or contact GitHub.
+The corrected exporter writes both raw and eligible-text fingerprints for new
+exports. A fingerprint is an inventory comparison, not a digital signature;
+the manifest and checker themselves are trusted inputs.
+
 When uploading through the browser, upload the contents of this prepared copy,
 not the private working project or the outer staging folder. Browser upload
 does not enforce .gitignore. Include the root README, LICENSE, .gitignore,
@@ -152,6 +176,42 @@ No root Git repository/history was found locally, so a first archival commit is
 necessary. The export records upstream base commits and retains local modified
 sources and historical reports; it does not manufacture a development history.
 All existing nested upstream histories remain intact in the private original.
+
+The preceding instructions describe the first export. If the archive is already
+published, use the existing repository; do not initialize Git again, recreate
+the repository, force-push or rewrite earlier commits.
+
+## Updating the existing repository with GitHub Desktop
+
+For the 2026-10-10 line-ending correction, copy only these seven files from the
+prepared source copy into the existing clone, preserving their relative paths:
+
+- `PUBLICATION_MANIFEST.json`
+- `docs/PUBLICATION.md`
+- `docs/RELEASE_AUDIT.md`
+- `tools/prepare_publication.ps1`
+- `tools/verify_publication.ps1`
+- `tools/publication_integrity.ps1` (new)
+- `tools/tests/publication_line_endings_test.ps1` (new)
+
+1. In GitHub Desktop, select the existing **knovGBC** repository and **main**
+   branch. Fetch origin; if updates exist, pull them before copying files.
+   If unrelated local changes exist, review them first instead of overwriting.
+2. Open **Repository > Show in Explorer**. This is the clone that Desktop
+   uploads, and may be different from the separately prepared source copy.
+3. Copy the seven files above to the matching locations. Do not copy the outer
+   `publication` directory, the private project or backup folders. Do not alter
+   `.git`. If the prepared copy is already this clone, no copying is needed.
+4. Review the **Changes** tab: five modified files and two new files are expected.
+   No emulator source, commercial game, disc image or SDK binary belongs in this
+   update. Optionally run the checker and regression command from the clone.
+5. Enter `Fix publication verification across Windows and Linux line endings`
+   in **Summary**, select these seven files, then click **Commit to main** and
+   **Push origin**. This creates a normal new commit; earlier commits remain.
+6. On GitHub, confirm the changed paths, the new commit and the **Actions** run.
+   The existing synthetic host workflow tests the emulator on a host computer;
+   it does not run this PowerShell regression script, bootstrap the full Saturn
+   SDK, prove licensing clearance or validate real hardware.
 
 Do not create a release containing old Tetris/Super Mario Land BIN/CUE files.
 Publishing the source does not authorize publishing the games or the withheld

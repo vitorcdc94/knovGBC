@@ -8,6 +8,7 @@ param(
 # knovGBC source export correction dated 2026-10-10: reviewed build templates,
 # executable-signature exclusion and repeatable privacy/license transforms.
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'publication_integrity.ps1')
 $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 if ($Name -notmatch '^knovGBC-[A-Za-z0-9_-]+$') {
     throw 'Use a simple knovGBC-prefixed output name without paths.'
@@ -175,11 +176,16 @@ function Export-File([System.IO.FileInfo]$Item) {
             throw "Unreviewed workstation path in $relative; review before publication."
         }
     }
-    $entries.Add([pscustomobject]@{
+    $fingerprint = Get-PublicationFingerprint -Bytes ([IO.File]::ReadAllBytes($target)) -Text:($Item.Extension -notin @('.bin', '.png'))
+    $entry = [ordered]@{
         path = $relative; original_sha256 = $hash
-        exported_sha256 = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
-        bytes = (Get-Item -LiteralPath $target).Length; transformation = $change
-    })
+        exported_sha256 = $fingerprint.exported_sha256
+        bytes = $fingerprint.bytes; transformation = $change
+    }
+    foreach ($key in @('canonical_eol', 'canonical_sha256', 'canonical_bytes')) {
+        if ($fingerprint.Contains($key)) { $entry[$key] = $fingerprint[$key] }
+    }
+    $entries.Add([pscustomobject]$entry)
 }
 function Export-Directory([string]$Directory) {
     foreach ($item in Get-ChildItem -LiteralPath $Directory -Force) {
@@ -202,6 +208,7 @@ foreach ($directory in @('src', 'tools', 'docs', '.github', 'roms',
 $manifest = [ordered]@{
     project = 'knovGBC'; record_date = '2026-10-10'; source_history = 'No root Git repository found during preparation'
     original_project_preserved = $true; uploaded = $false; files = @($entries | Sort-Object path)
+    fingerprint_policy = 'Raw source/export SHA-256 and sizes are retained. Explicit text fingerprints additionally compare CRLF-to-LF bytes; binary and NUL-containing inputs require exact bytes.'
     withheld_scopes = @('build/', 'dist/', 'toolchain/', 'tmp/', 'unselected root downloads/logs',
         'third_party/crosstool-ng-1.28.0/', 'third_party/libyaul-build-scripts/',
         'third_party/rgbds-1.0.3/', 'third_party/saroo-reference/',

@@ -5,6 +5,7 @@ param([string]$Root)
 # Read-only. This checks inventory and known markers, not legal clearance.
 $ErrorActionPreference = 'Stop'
 if (-not $Root) { $Root = Split-Path -Parent $PSScriptRoot }
+. (Join-Path $PSScriptRoot 'publication_integrity.ps1')
 $rootPath = (Resolve-Path -LiteralPath $Root).Path.TrimEnd('\', '/')
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $rootPath 'PUBLICATION_MANIFEST.json') | ConvertFrom-Json
 $expected = @{}
@@ -42,17 +43,30 @@ $openBoot = @{
     'src/saturn/bootroms/cgb_boot_fast.bin' = '734FC76858BC6D78E724DF75EFE90146C612817F05C5A837409F9EA34C70E26E'
 }
 $sourceImage = 'third_party/SameBoy/BootROMs/SameBoyLogo.png'
+$eolMatches = 0
 foreach ($file in $files) {
     $relative = $file.FullName.Substring($rootPath.Length + 1).Replace('\', '/')
     $seen[$relative] = $true
     if ($relative -eq 'PUBLICATION_MANIFEST.json') { continue }
+    $bytes = [IO.File]::ReadAllBytes($file.FullName)
+    $textEligible = $file.Extension -notin @('.bin', '.png')
+    $fingerprint = Get-PublicationFingerprint -Bytes $bytes -Text:$textEligible
     if (-not $expected.ContainsKey($relative)) {
         $problems.Add("Unlisted file: $relative")
     } else {
         $entry = $expected[$relative]
-        $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
-        if ($hash -ne $entry.exported_sha256 -or $file.Length -ne $entry.bytes) {
-            $problems.Add("Manifest hash/size mismatch: $relative")
+        $rawMatch = $fingerprint.exported_sha256 -eq $entry.exported_sha256 -and
+            $fingerprint.bytes -eq $entry.bytes
+        if (-not $rawMatch) {
+            # Only explicitly recorded text fingerprints allow EOL equivalence.
+            # No whitespace trimming, decoding, BOM removal or binary fallback.
+            $hasCanonical = $entry.PSObject.Properties.Name -contains 'canonical_eol'
+            $canonicalMatch = $hasCanonical -and $entry.canonical_eol -eq 'crlf-to-lf-v1' -and
+                $fingerprint.Contains('canonical_eol') -and
+                $fingerprint.canonical_sha256 -eq $entry.canonical_sha256 -and
+                $fingerprint.canonical_bytes -eq $entry.canonical_bytes
+            if ($canonicalMatch) { $eolMatches++ }
+            else { $problems.Add("Manifest hash/size mismatch: $relative") }
         }
     }
     if ($relative -match '^(build|dist|tmp|toolchain|publication|\.toolchain-src)/') {
@@ -65,7 +79,6 @@ foreach ($file in $files) {
         $file.Extension -match '^\.(gb|gbc|gba|sav|srm|cue|iso|elf|exe|dll|o|a|so|zip|7z|rar|pdf|pem|key|p12|pfx|mov|mp4|wav|mp3|adx|pcm|jpg|jpeg)$') {
         $problems.Add("Unexpected private/generated/media file: $relative")
     }
-    $bytes = [IO.File]::ReadAllBytes($file.FullName)
     if ($bytes.Length -ge 4) {
         $magic = [BitConverter]::ToString($bytes, 0, 4)
         if ($magic -in @('7F-45-4C-46', 'FE-ED-FA-CE', 'CE-FA-ED-FE',
@@ -76,7 +89,7 @@ foreach ($file in $files) {
         }
     }
     if ($openBoot.ContainsKey($relative)) {
-        if ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ne $openBoot[$relative]) {
+        if ($fingerprint.exported_sha256 -ne $openBoot[$relative]) {
             $problems.Add("Reviewed open boot binary changed: $relative")
         }
         continue
@@ -104,4 +117,5 @@ if ($problems.Count -gt 0) {
     throw "Publication check failed with $($problems.Count) problem(s). No files changed."
 }
 Write-Output "PASS: $($expected.Count) manifest entries plus manifest; hashes, sizes and known publication markers checked."
+Write-Output "Text files matching only after CRLF-to-LF comparison: $eolMatches. Binary inputs require exact bytes."
 Write-Output 'No files changed. This is not exhaustive secret detection, legal clearance, a compilation or a hardware test.'

@@ -1,0 +1,6 @@
+*.o
+*gnuboy
+config.*
+
+# knovGBC source archive, 2026-10-07: retain the build input template.
+!sys/nix/config.h.in

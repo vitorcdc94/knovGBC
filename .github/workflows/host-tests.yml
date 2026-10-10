@@ -1,0 +1,22 @@
+name: Synthetic host tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: APU parity (no cartridge required)
+        run: bash tools/tests/audio057_apu_test.sh
+      - name: SCSP mock
+        run: bash tools/tests/picogb_056_saturn_audio_test.sh
+      - name: VDP2 zoom
+        run: bash tools/tests/vdp2_zoom_test.sh
+      - name: SM83 contract
+        run: bash tools/tests/picogb_sm83_contract.sh
+      - name: PPU regression
+        run: bash tools/tests/picogb_ppu_regression.sh
+      - name: Selective tile invalidation
+        run: SYNTHETIC_ONLY=1 bash tools/tests/picogb_055_tile_dirty_differential.sh

@@ -1,0 +1,11 @@
+/* One-ROM Super Mario Land test: embed the 64 KiB DMG/MBC1 cartridge in
+ * 1ST_READ.BIN. Keep the validated Tetris ROM source unchanged. */
+
+.section .data.knovgbc_mvp_rom, "aw"
+.align 4
+
+.global _knovgbc_mvp_rom
+.global _knovgbc_mvp_rom_end
+_knovgbc_mvp_rom:
+        .incbin "roms/Super Mario Land (World) (Rev 1).gb"
+_knovgbc_mvp_rom_end:

@@ -1,0 +1,74 @@
+/* knovGBC PicoGB library extension/snapshot; notice updated 2026-10-10.
+ * This source extends/adapts the PicoGB library based on upstream commit
+ * 325a12a25e2d1f4799424cc18c0e69a7810695b0.
+ * The preserved local implementation predates the 2026-10-07 inventory.
+ * Exact historical code-edit dates are not established by surviving records.
+ * Only this source-handoff notice was changed on 2026-10-10.
+ * See third_party/PicoGB/KNOVGBC_CHANGES.md for dated validation evidence;
+ * report dates are not claims that every code change occurred on those dates.
+ * Distributed with the modified library under GNU LGPL v2.1.
+ * See third_party/PicoGB/LICENSE.txt for the library license.
+ * Original upstream license and copyright notices remain applicable.
+ */
+/*
+ * SH-2 RGB1555 tile-line blitter.
+ *
+ * r4 = destination (eight 16-bit pixels)
+ * r5 = source      (eight 16-bit pixels, 4-byte aligned)
+ *
+ * The visible framebuffer begins at an SCX-dependent pixel offset. It is
+ * therefore only guaranteed to be word-aligned. The common aligned path
+ * uses four longword moves; the other path remains safe by using word moves.
+ */
+.section .text, "ax"
+.align 2
+.global _picogb_sh2_store_tile8
+.type _picogb_sh2_store_tile8, @function
+
+_picogb_sh2_store_tile8:
+        mov     r4, r0
+        tst     #2, r0
+        bf      .L_word_copy
+        nop
+
+        mov.l   @r5+, r0
+        mov.l   r0, @r4
+        add     #4, r4
+        mov.l   @r5+, r0
+        mov.l   r0, @r4
+        add     #4, r4
+        mov.l   @r5+, r0
+        mov.l   r0, @r4
+        add     #4, r4
+        mov.l   @r5+, r0
+        mov.l   r0, @r4
+        rts
+        nop
+
+.L_word_copy:
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        add     #2, r4
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        add     #2, r4
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        add     #2, r4
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        add     #2, r4
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        add     #2, r4
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        add     #2, r4
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        add     #2, r4
+        mov.w   @r5+, r0
+        mov.w   r0, @r4
+        rts
+        nop
+.size _picogb_sh2_store_tile8, . - _picogb_sh2_store_tile8

@@ -1,0 +1,17 @@
+/* Open boot ROMs assembled from SameBoy's Expat-licensed BootROMs sources. */
+
+.section .rodata.sameboy_boot_roms, "a"
+.align 4
+
+.global _knovgbc_dmg_boot_rom
+.global _knovgbc_dmg_boot_rom_end
+_knovgbc_dmg_boot_rom:
+        .incbin "src/saturn/bootroms/dmg_boot.bin"
+_knovgbc_dmg_boot_rom_end:
+
+.align 4
+.global _knovgbc_cgb_boot_rom
+.global _knovgbc_cgb_boot_rom_end
+_knovgbc_cgb_boot_rom:
+        .incbin "src/saturn/bootroms/cgb_boot_fast.bin"
+_knovgbc_cgb_boot_rom_end:

@@ -1,0 +1,43 @@
+%rename asm old_asm
+*asm:
+%(old_asm) \
+--isa=sh2 \
+--big \
+--reduce-memory-overheads
+
+*includes: -I.
+
+%rename cc1 old_c11
+*cc1:
+%(old_c11) \
+-m2 \
+-mb \
+-ffreestanding \
+-fomit-frame-pointer \
+-ffast-math \
+-fstrict-aliasing \
+-flto \
+-ffat-lto-objects \
+-ffunction-sections \
+-fdata-sections \
+%(includes)
+
+%rename cc1plus old_cc1plus
+*cc1plus:
+%(old_cc1plus) \
+-fno-exceptions \
+-fno-rtti \
+-fno-unwind-tables \
+-fno-threadsafe-statics \
+-fno-use-cxa-atexit \
+%(includes)
+
+*startfile:
+
+*endfile:
+
+*lib:
+
+%rename link old_link
+*link:
+-Tsrc/saturn/yaul-bootstrap.x

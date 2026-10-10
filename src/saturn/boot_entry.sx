@@ -1,0 +1,52 @@
+/*
+ * Bootstrap for the Yaul/SameBoy application on SAROO.
+ *
+ * Yaul's stock crt0 establishes SR and SP, but leaves VBR in the state passed
+ * by the loader.  The proven boot probe established that the SAROO path must
+ * set VBR before any Yaul initialisation tries to register CPU exceptions.
+ * This entry point executes before __sys_init, BSS clearing and all Yaul code.
+ */
+
+/* Keep this in the ordinary .text input section. Yaul's stock linker script
+ * places it before .text.* sections, while the C code is built with function
+ * sections. That guarantees the IP handoff reaches _start at 0x06004000
+ * without needing a second linker script. */
+.section .text, "ax"
+.align 4
+.global _start
+.type _start, @function
+
+_start:
+        /* Mask CPU interrupts before touching any shared hardware state. */
+        mov     #0xF0, r0
+        ldc     r0, sr
+
+        /* Use the same stack specified in the IP.BIN header. */
+        mov.l   .L_master_stack, r15
+
+        /* The Saturn master vector table lives at the base of H-WRAM. */
+        mov.l   .L_vbr, r0
+        ldc     r0, vbr
+
+        /* Do not let a pending SCU source pre-empt Yaul initialisation. */
+        mov.l   .L_scu_ims, r0
+        mov.l   .L_scu_mask_all, r1
+        mov.l   r1, @r0
+
+        /* Continue with the normal Yaul runtime only after the CPU state is
+         * valid. __sys_init clears BSS and reaches the existing main(). */
+        mov.l   .L_sys_init, r0
+        jmp     @r0
+        nop
+
+.align 4
+.L_master_stack:
+        .long   ___master_stack
+.L_vbr:
+        .long   0x06000000
+.L_scu_ims:
+        .long   0x25FE00A0
+.L_scu_mask_all:
+        .long   0x0000BFFF
+.L_sys_init:
+        .long   ___sys_init

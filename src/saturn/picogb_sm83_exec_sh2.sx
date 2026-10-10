@@ -1,0 +1,780 @@
+/* knovGBC PicoGB library extension/snapshot; notice updated 2026-10-10.
+ * This source extends/adapts the PicoGB library based on upstream commit
+ * 325a12a25e2d1f4799424cc18c0e69a7810695b0.
+ * The preserved local implementation predates the 2026-10-07 inventory.
+ * Exact historical code-edit dates are not established by surviving records.
+ * Only this source-handoff notice was changed on 2026-10-10.
+ * See third_party/PicoGB/KNOVGBC_CHANGES.md for dated validation evidence;
+ * report dates are not claims that every code change occurred on those dates.
+ * Distributed with the modified library under GNU LGPL v2.1.
+ * See third_party/PicoGB/LICENSE.txt for the library license.
+ * Original upstream license and copyright notices remain applicable.
+ */
+/*
+ * First SH-2 backend for PicoGB's SM83 interpreter.
+ *
+ * This is intentionally a compact hybrid, not a second emulator hidden in
+ * assembly.  It handles the dense, register-only opcode families that made
+ * the C dispatcher exceed the SH-2 cache.  Interrupt entry, HALT/STOP,
+ * CB-prefixed code, memory/I/O operands and uncommon flow-control opcodes
+ * tail-call the original C interpreter through a narrow ABI.
+ *
+ * Contract (checked by picogb_sm83_sh2.c):
+ *   r4 = mb_state *, r0 = returned M-cycle count
+ *   IR.low is the already-prefetched opcode; PC follows that opcode.
+ *   r8-r14 and PR are callee-saved under the SH-2 GCC ABI.
+ */
+
+.section .text, "ax"
+.align 2
+.global _picogb_sm83_exec_sh2
+.type _picogb_sm83_exec_sh2, @function
+
+.equ MB_B,        0
+.equ MB_C,        1
+.equ MB_D,        2
+.equ MB_E,        3
+.equ MB_H,        4
+.equ MB_L,        5
+.equ MB_F,        6
+.equ MB_A,        7
+.equ MB_IR_LOW,   9
+.equ MB_PC,      12
+.equ MB_SP,      14
+.equ MB_IF,      16
+.equ MB_IE,      17
+.equ MB_IME,     18
+.equ MB_IME_ASK, 19
+.equ MB_HALTING, 24
+.equ MB_FR1,     28
+.equ MB_FR2,     30
+.equ MB_FMC,     32
+
+.equ FLAG_Z, 0x80
+.equ FLAG_N, 0x40
+.equ FLAG_H, 0x20
+.equ FLAG_C, 0x10
+
+_picogb_sm83_exec_sh2:
+        sts.l   pr,@-r15
+        mov.l   r8,@-r15
+        mov.l   r9,@-r15
+        mov     r4,r8
+
+        /* Mirror the reference interpreter's small interrupt prologue. A
+         * pending enabled IRQ is uncommon and must retain its exact C path. */
+        mov     #MB_IME,r0
+        mov.b   @(r0,r8),r1
+        extu.b  r1,r1
+        tst     r1,r1
+        bt      .L_ime_disabled
+        nop
+
+        mov     #MB_IE,r0
+        mov.b   @(r0,r8),r1
+        extu.b  r1,r1
+        mov     #MB_IF,r0
+        mov.b   @(r0,r8),r2
+        extu.b  r2,r2
+        and     r2,r1
+        tst     r1,r1
+        bf      .L_fallback
+        nop
+        bra     .L_check_halt
+        nop
+
+.L_ime_disabled:
+        /* The instruction after EI is timing-sensitive. Let the C oracle
+         * apply the delayed enable and execute that one opcode as a single
+         * transaction, rather than exposing a partially updated IME state
+         * to a fallback below. */
+        mov     #MB_IME_ASK,r0
+        mov.b   @(r0,r8),r1
+        extu.b  r1,r1
+        tst     r1,r1
+        bt      .L_check_halt
+        nop
+        bra     .L_fallback
+        nop
+
+.L_check_halt:
+        /* The frontend normally skips this call while halted. Preserve the
+         * original edge-case semantics if a caller reaches us nevertheless. */
+        mov     r8,r0
+        add     #MB_HALTING,r0
+        mov.l   @r0,r1
+        tst     r1,r1
+        bf      .L_fallback
+        nop
+
+        mov     #MB_IR_LOW,r0
+        mov.b   @(r0,r8),r1
+        extu.b  r1,r1                  /* r1 = prefetched opcode */
+
+        /* Tiny single-opcode cases before the opcode families. */
+        mov     r1,r0
+        cmp/eq  #0x00,r0                /* NOP */
+        bt      .L_finish_0
+        nop
+        mov     #0x7F,r2
+        add     #0x74,r2                 /* unsigned 0xF3 */
+        cmp/eq  r2,r0                    /* DI */
+        bt      .L_di
+        nop
+        mov     #0x7F,r2
+        add     #0x7C,r2                 /* unsigned 0xFB */
+        cmp/eq  r2,r0                    /* EI */
+        bt      .L_ei
+        nop
+
+        /* INC r8 / DEC r8 / LD r8,d8. The (HL) variants retain the C path. */
+        mov     r1,r0
+        and     #0xC7,r0
+        cmp/eq  #0x04,r0
+        bt      .L_inc_r8
+        nop
+        cmp/eq  #0x05,r0
+        bt      .L_dec_r8
+        nop
+        cmp/eq  #0x06,r0
+        bt      .L_ld_r8_imm
+        nop
+
+        /* LD r16,d16 / INC r16 / DEC r16 / ADD HL,r16. */
+        mov     r1,r0
+        and     #0xCF,r0
+        cmp/eq  #0x01,r0
+        bt      .L_ld_r16_imm
+        nop
+        cmp/eq  #0x03,r0
+        bt      .L_inc_r16
+        nop
+        cmp/eq  #0x0B,r0
+        bt      .L_dec_r16
+        nop
+        cmp/eq  #0x09,r0
+        bt      .L_add_hl_r16
+        nop
+
+        /* The eight immediate ALU encodings share a 0xC6 mask. */
+        mov     r1,r0
+        and     #0xC7,r0
+        mov     #0x7F,r2
+        add     #0x47,r2                 /* unsigned 0xC6 */
+        cmp/eq  r2,r0
+        bt      .L_alu_imm
+        nop
+
+        /* 0x40..0x7F is LD r,r, except HALT and any (HL) operand. */
+        mov     r1,r0
+        mov     #0x40,r2
+        cmp/hs  r2,r0
+        bf      .L_fallback
+        nop
+        mov     #0x7F,r2
+        add     #1,r2                    /* unsigned 0x80 */
+        cmp/hs  r2,r0
+        bt      .L_alu_or_fallback
+        nop
+        bra     .L_ld_r8_r8
+        nop
+
+.L_alu_or_fallback:
+        mov     #0x7F,r2
+        add     #0x41,r2                 /* unsigned 0xC0 */
+        cmp/hs  r2,r0
+        bt      .L_fallback
+        nop
+        bra     .L_alu_r8
+        nop
+
+/* ------------------------------------------------------------------------- */
+/* Register move family: LD B..A,B..A (no memory and no flag effect).       */
+
+.L_ld_r8_r8:
+        mov     r1,r0
+        cmp/eq  #0x76,r0                /* HALT */
+        bt      .L_fallback
+        nop
+
+        mov     r1,r0
+        and     #7,r0                   /* source byte offset */
+        mov     #6,r2
+        cmp/eq  r2,r0
+        bt      .L_fallback             /* source (HL) */
+        nop
+        mov     r0,r5                   /* retain source byte offset */
+
+        mov     r1,r2
+        shlr2   r2
+        shlr    r2
+        mov     r2,r3
+        mov     r3,r0
+        and     #7,r0
+        mov     r0,r3                   /* destination byte offset */
+        mov     #6,r2
+        cmp/eq  r2,r3
+        bt      .L_fallback             /* destination (HL) */
+        nop
+
+        mov     r5,r0
+        mov.b   @(r0,r8),r2
+        mov     r3,r0
+        mov.b   r2,@(r0,r8)
+        bra     .L_finish_0
+        nop
+
+/* ------------------------------------------------------------------------- */
+/* INC/DEC and immediate register loads.                                    */
+
+.L_inc_r8:
+        mov     r1,r0
+        shlr2   r0
+        shlr    r0
+        and     #7,r0
+        mov     #6,r2
+        cmp/eq  r2,r0
+        bt      .L_fallback
+        nop
+        mov     r0,r5                   /* physical byte offset */
+        mov     r5,r0
+        mov.b   @(r0,r8),r2
+        extu.b  r2,r2
+        mov     r2,r3                   /* old value */
+        add     #1,r2
+        extu.b  r2,r2
+
+        mov     #MB_F,r0
+        mov.b   @(r0,r8),r4
+        extu.b  r4,r4
+        mov     r4,r0
+        and     #FLAG_C,r0
+        mov     r0,r4
+
+        mov     r3,r0
+        and     #0x0F,r0
+        cmp/eq  #0x0F,r0
+        bf      .L_inc_no_h
+        nop
+        mov     #FLAG_H,r0
+        or      r0,r4
+.L_inc_no_h:
+        tst     r2,r2
+        bf      .L_inc_no_z
+        nop
+        mov     #FLAG_Z,r0
+        or      r0,r4
+.L_inc_no_z:
+        mov     r5,r0
+        mov.b   r2,@(r0,r8)
+        bra     .L_store_flags_finish_0
+        nop
+
+.L_dec_r8:
+        mov     r1,r0
+        shlr2   r0
+        shlr    r0
+        and     #7,r0
+        mov     #6,r2
+        cmp/eq  r2,r0
+        bt      .L_fallback
+        nop
+        mov     r0,r5
+        mov     r5,r0
+        mov.b   @(r0,r8),r2
+        extu.b  r2,r2
+        mov     r2,r3
+        add     #-1,r2
+        extu.b  r2,r2
+
+        mov     #MB_F,r0
+        mov.b   @(r0,r8),r4
+        extu.b  r4,r4
+        mov     r4,r0
+        and     #FLAG_C,r0
+        mov     r0,r4
+        mov     #FLAG_N,r0
+        or      r0,r4
+
+        mov     r3,r0
+        and     #0x0F,r0
+        tst     r0,r0
+        bf      .L_dec_no_h
+        nop
+        mov     #FLAG_H,r0
+        or      r0,r4
+.L_dec_no_h:
+        tst     r2,r2
+        bf      .L_dec_no_z
+        nop
+        mov     #FLAG_Z,r0
+        or      r0,r4
+.L_dec_no_z:
+        mov     r5,r0
+        mov.b   r2,@(r0,r8)
+        bra     .L_store_flags_finish_0
+        nop
+
+.L_ld_r8_imm:
+        mov     r1,r0
+        shlr2   r0
+        shlr    r0
+        and     #7,r0
+        mov     #6,r2
+        cmp/eq  r2,r0
+        bt      .L_fallback
+        nop
+        mov     r0,r9                   /* survive the C operand fetch */
+        mov     r8,r4
+        mov.l   .L_fetch8,r0
+        jsr     @r0
+        nop
+        /* Indexed SH-2 stores require R0 as the index register. */
+        mov     r0,r3
+        mov     r9,r0
+        mov.b   r3,@(r0,r8)
+        mov     #1,r9
+        bra     .L_finish
+        nop
+
+/* ------------------------------------------------------------------------- */
+/* 16-bit register family.                                                   */
+
+.L_ld_r16_imm:
+        mov     r1,r0
+        shlr2   r0
+        shlr2   r0
+        and     #3,r0
+        mov     r0,r9
+        mov     r8,r4
+        mov.l   .L_fetch16,r0
+        jsr     @r0
+        nop
+        mov     r0,r5                   /* retain d16 while selecting pair */
+        mov     r9,r2
+        mov     r2,r0
+        cmp/eq  #0,r0
+        bt      .L_ld_r16_bc
+        nop
+        cmp/eq  #1,r0
+        bt      .L_ld_r16_de
+        nop
+        cmp/eq  #2,r0
+        bt      .L_ld_r16_hl
+        nop
+        mov     r8,r2
+        add     #MB_SP,r2
+        mov.w   r5,@r2
+        bra     .L_ld_r16_done
+        nop
+.L_ld_r16_bc:
+        mov.w   r5,@r8
+        bra     .L_ld_r16_done
+        nop
+.L_ld_r16_de:
+        mov     r8,r2
+        add     #2,r2
+        mov.w   r5,@r2
+        bra     .L_ld_r16_done
+        nop
+.L_ld_r16_hl:
+        mov     r8,r2
+        add     #4,r2
+        mov.w   r5,@r2
+.L_ld_r16_done:
+        mov     #2,r9
+        bra     .L_finish
+        nop
+
+.L_inc_r16:
+        mov     r1,r0
+        shlr2   r0
+        shlr2   r0
+        and     #3,r0
+        bra     .L_r16_incdec_common
+        nop
+
+.L_dec_r16:
+        mov     r1,r0
+        shlr2   r0
+        shlr2   r0
+        and     #3,r0
+        mov     #1,r3                   /* decrement marker */
+        bra     .L_r16_incdec_select
+        nop
+
+.L_r16_incdec_common:
+        mov     #0,r3
+.L_r16_incdec_select:
+        cmp/eq  #0,r0
+        bt      .L_r16_incdec_bc
+        nop
+        cmp/eq  #1,r0
+        bt      .L_r16_incdec_de
+        nop
+        cmp/eq  #2,r0
+        bt      .L_r16_incdec_hl
+        nop
+        mov     r8,r2
+        add     #MB_SP,r2
+        bra     .L_r16_incdec_do
+        nop
+.L_r16_incdec_bc:
+        mov     r8,r2
+        bra     .L_r16_incdec_do
+        nop
+.L_r16_incdec_de:
+        mov     r8,r2
+        add     #2,r2
+        bra     .L_r16_incdec_do
+        nop
+.L_r16_incdec_hl:
+        mov     r8,r2
+        add     #4,r2
+.L_r16_incdec_do:
+        mov.w   @r2,r4
+        extu.w  r4,r4
+        tst     r3,r3
+        bf      .L_r16_do_dec
+        nop
+        add     #1,r4
+        bra     .L_r16_incdec_store
+        nop
+.L_r16_do_dec:
+        add     #-1,r4
+.L_r16_incdec_store:
+        mov.w   r4,@r2
+        mov     #1,r9
+        bra     .L_finish
+        nop
+
+.L_add_hl_r16:
+        mov     r1,r0
+        shlr2   r0
+        shlr2   r0
+        and     #3,r0
+        cmp/eq  #0,r0
+        bt      .L_add_hl_bc
+        nop
+        cmp/eq  #1,r0
+        bt      .L_add_hl_de
+        nop
+        cmp/eq  #2,r0
+        bt      .L_add_hl_hl
+        nop
+        mov     r8,r2
+        add     #MB_SP,r2
+        mov.w   @r2,r2
+        extu.w  r2,r2
+        bra     .L_add_hl_have_rhs
+        nop
+.L_add_hl_bc:
+        mov.w   @r8,r2
+        extu.w  r2,r2
+        bra     .L_add_hl_have_rhs
+        nop
+.L_add_hl_de:
+        mov     r8,r2
+        add     #2,r2
+        mov.w   @r2,r2
+        extu.w  r2,r2
+        bra     .L_add_hl_have_rhs
+        nop
+.L_add_hl_hl:
+        mov     r8,r2
+        add     #4,r2
+        mov.w   @r2,r2
+        extu.w  r2,r2
+.L_add_hl_have_rhs:
+        mov     r8,r3
+        add     #4,r3
+        mov.w   @r3,r4
+        extu.w  r4,r4                  /* old HL */
+        mov     r4,r5
+        add     r2,r5
+        mov.w   r5,@r3
+
+        /* Preserve Z and calculate C now; keep H lazy in the exact PicoGB
+         * representation so later DAA/PUSH paths remain indistinguishable. */
+        mov     #MB_F,r0
+        mov.b   @(r0,r8),r3
+        extu.b  r3,r3
+        mov     r3,r0
+        and     #FLAG_Z,r0
+        mov     r0,r3
+        mov     r5,r0
+        extu.w  r0,r0
+        cmp/hi  r0,r5
+        bf      .L_add_hl_no_c
+        nop
+        mov     #FLAG_C,r0
+        or      r0,r3
+.L_add_hl_no_c:
+        mov     #MB_F,r0
+        mov.b   r3,@(r0,r8)
+        mov     r8,r0
+        add     #MB_FR1,r0
+        mov.w   r4,@r0
+        add     #2,r0
+        mov.w   r2,@r0
+        add     #2,r0
+        mov     #1,r3                  /* MB_FMC_MODE_ADD_r16 */
+        mov.l   r3,@r0
+        mov     #1,r9
+        bra     .L_finish
+        nop
+
+/* ------------------------------------------------------------------------- */
+/* ALU A,r and ALU A,d8.  ADD/SUB/AND/XOR/OR/CP are exact here; ADC/SBC keep
+ * the C oracle for now because their lazy-flag carry source is a less common
+ * path and must not be guessed.                                             */
+
+.L_alu_r8:
+        mov     r1,r0
+        and     #7,r0
+        mov     #6,r2
+        cmp/eq  r2,r0
+        bt      .L_fallback
+        nop
+        mov.b   @(r0,r8),r2
+        extu.b  r2,r2                  /* source */
+        mov     #MB_A,r0
+        mov.b   @(r0,r8),r3
+        extu.b  r3,r3                  /* A */
+        mov     r1,r0
+        shlr2   r0
+        shlr    r0
+        and     #7,r0
+        mov     #0,r9                  /* register operand: no extra fetch */
+        bra     .L_alu_select
+        nop
+
+.L_alu_imm:
+        mov     r1,r0
+        shlr2   r0
+        shlr    r0
+        and     #7,r0
+        mov     r0,r9                  /* operation survives C fetch */
+        cmp/eq  #1,r0
+        bt      .L_fallback            /* ADC d8 must not consume operand */
+        nop
+        cmp/eq  #3,r0
+        bt      .L_fallback            /* SBC d8 must not consume operand */
+        nop
+        mov     r8,r4
+        mov.l   .L_fetch8,r0
+        jsr     @r0
+        nop
+        extu.b  r0,r2
+        mov     #MB_A,r0
+        mov.b   @(r0,r8),r3
+        extu.b  r3,r3
+        mov     r9,r0
+        mov     #1,r9                  /* immediate operand fetch consumed */
+        bra     .L_alu_select
+        nop
+
+.L_alu_select:
+        cmp/eq  #0,r0
+        bt      .L_alu_add
+        nop
+        cmp/eq  #1,r0
+        bt      .L_fallback            /* ADC */
+        nop
+        cmp/eq  #2,r0
+        bt      .L_alu_sub
+        nop
+        cmp/eq  #3,r0
+        bt      .L_fallback            /* SBC */
+        nop
+        cmp/eq  #4,r0
+        bt      .L_alu_and
+        nop
+        cmp/eq  #5,r0
+        bt      .L_alu_xor
+        nop
+        cmp/eq  #6,r0
+        bt      .L_alu_or
+        nop
+        bra     .L_alu_cp
+        nop
+
+.L_alu_add:
+        mov     r3,r5
+        add     r2,r5
+        mov     r5,r6
+        extu.b  r6,r6                  /* byte result */
+        mov     #0,r4
+        cmp/hi  r6,r5
+        bf      .L_alu_add_no_c
+        nop
+        mov     #FLAG_C,r0
+        or      r0,r4
+.L_alu_add_no_c:
+        mov     r3,r0
+        and     #0x0F,r0
+        mov     r0,r7
+        mov     r2,r0
+        and     #0x0F,r0
+        add     r0,r7
+        mov     #0x0F,r0
+        cmp/hi  r0,r7
+        bf      .L_alu_add_no_h
+        nop
+        mov     #FLAG_H,r0
+        or      r0,r4
+.L_alu_add_no_h:
+        tst     r6,r6
+        bf      .L_alu_add_no_z
+        nop
+        mov     #FLAG_Z,r0
+        or      r0,r4
+.L_alu_add_no_z:
+        mov     r6,r3
+        bra     .L_alu_store
+        nop
+
+.L_alu_sub:
+        bra     .L_alu_sub_common
+        nop
+.L_alu_cp:
+        mov     #2,r0                  /* bit 1: flags only, retain bit 0 */
+        or      r0,r9
+.L_alu_sub_common:
+        mov     r3,r5
+        sub     r2,r5
+        mov     r5,r6
+        extu.b  r6,r6
+        mov     #FLAG_N,r4
+        cmp/hs  r2,r3
+        bt      .L_alu_sub_no_c
+        nop
+        mov     #FLAG_C,r0
+        or      r0,r4
+.L_alu_sub_no_c:
+        mov     r3,r0
+        and     #0x0F,r0
+        mov     r0,r7
+        mov     r2,r0
+        and     #0x0F,r0
+        cmp/hs  r0,r7
+        bt      .L_alu_sub_no_h
+        nop
+        mov     #FLAG_H,r0
+        or      r0,r4
+.L_alu_sub_no_h:
+        tst     r6,r6
+        bf      .L_alu_sub_no_z
+        nop
+        mov     #FLAG_Z,r0
+        or      r0,r4
+.L_alu_sub_no_z:
+        mov     r6,r3
+        bra     .L_alu_store
+        nop
+
+.L_alu_and:
+        and     r2,r3
+        mov     #FLAG_H,r4
+        bra     .L_alu_logic_z
+        nop
+.L_alu_xor:
+        xor     r2,r3
+        mov     #0,r4
+        bra     .L_alu_logic_z
+        nop
+.L_alu_or:
+        or      r2,r3
+        mov     #0,r4
+.L_alu_logic_z:
+        tst     r3,r3
+        bf      .L_alu_logic_no_z
+        nop
+        mov     #FLAG_Z,r0
+        or      r0,r4
+.L_alu_logic_no_z:
+.L_alu_store:
+        mov     #MB_F,r0
+        mov.b   r4,@(r0,r8)
+        mov     r8,r5
+        add     #MB_FMC,r5
+        mov     #0,r0
+        mov.l   r0,@r5
+        mov     r9,r0
+        and     #2,r0
+        tst     r0,r0
+        bf      .L_alu_no_store_a
+        nop
+        mov     #MB_A,r0
+        mov.b   r3,@(r0,r8)
+.L_alu_no_store_a:
+        mov     r9,r0
+        and     #1,r0
+        mov     r0,r9
+        bra     .L_finish
+        nop
+
+/* ------------------------------------------------------------------------- */
+/* Miscellaneous flag/interrupt controls that need no memory helper.         */
+
+.L_di:
+        mov     #0,r2
+        mov     #MB_IME,r0
+        mov.b   r2,@(r0,r8)
+        mov     #MB_IME_ASK,r0
+        mov.b   r2,@(r0,r8)
+        bra     .L_finish_0
+        nop
+
+.L_ei:
+        mov     #1,r2
+        mov     #MB_IME_ASK,r0
+        mov.b   r2,@(r0,r8)
+        bra     .L_finish_0
+        nop
+
+/* ------------------------------------------------------------------------- */
+/* Shared state/return paths.                                                 */
+
+.L_store_flags_finish_0:
+        mov     #MB_F,r0
+        mov.b   r4,@(r0,r8)
+        mov     r8,r0
+        add     #MB_FMC,r0
+        mov     #0,r2
+        mov.l   r2,@r0
+.L_finish_0:
+        mov     #0,r9
+.L_finish:
+        mov     r8,r4
+        mov     r9,r5
+        mov.l   .L_finish_fn,r0
+        jsr     @r0
+        nop
+        bra     .L_return
+        nop
+
+.L_fallback:
+        mov     r8,r4
+        mov.l   .L_fallback_fn,r0
+        jsr     @r0
+        nop
+
+.L_return:
+        mov.l   @r15+,r9
+        mov.l   @r15+,r8
+        lds.l   @r15+,pr
+        rts
+        nop
+
+.align 2
+.L_fallback_fn:
+        .long   _picogb_sm83_sh2_fallback
+.L_fetch8:
+        .long   _picogb_sm83_sh2_fetch8
+.L_fetch16:
+        .long   _picogb_sm83_sh2_fetch16
+.L_finish_fn:
+        .long   _picogb_sm83_sh2_finish
+
+.size _picogb_sm83_exec_sh2, . - _picogb_sm83_exec_sh2

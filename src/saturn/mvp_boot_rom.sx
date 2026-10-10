@@ -1,0 +1,11 @@
+/* SameBoy's Expat-licensed DMG boot ROM. GBC support is deliberately absent
+ * from the first MVP. */
+
+.section .rodata.knovgbc_mvp_boot_rom, "a"
+.align 4
+
+.global _knovgbc_mvp_dmg_boot_rom
+.global _knovgbc_mvp_dmg_boot_rom_end
+_knovgbc_mvp_dmg_boot_rom:
+        .incbin "src/saturn/bootroms/dmg_boot.bin"
+_knovgbc_mvp_dmg_boot_rom_end:

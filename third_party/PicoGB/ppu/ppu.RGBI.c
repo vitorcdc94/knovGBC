@@ -1,0 +1,3 @@
+
+static const pixel_t palette[] PGB_DATA =
+{0xA, 0x2, 0x8, 0x0};

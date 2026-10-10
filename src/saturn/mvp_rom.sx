@@ -1,0 +1,12 @@
+/* One-ROM MVP: Tetris is part of 1ST_READ.BIN and remains in cacheable
+ * H-WRAM. Keep the section writable because SameBoy's borrowed-ROM API is
+ * intentionally typed as a mutable buffer. */
+
+.section .data.knovgbc_mvp_rom, "aw"
+.align 4
+
+.global _knovgbc_mvp_rom
+.global _knovgbc_mvp_rom_end
+_knovgbc_mvp_rom:
+        .incbin "roms/tetris.gb"
+_knovgbc_mvp_rom_end:

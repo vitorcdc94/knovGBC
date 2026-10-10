@@ -1,0 +1,42 @@
+/*
+ * Entry point for the staged Yaul initialisation trace.
+ *
+ * Keep this in .text: Yaul's linker script places .text before the C
+ * compiler's .text.* sections, so the Saturn IP handoff reaches this code at
+ * 0x06004000 without a separate linker script.
+ */
+.section .text, "ax"
+.align 4
+.global _start
+.type _start, @function
+
+_start:
+        /* Do not accept CPU or SCU interrupts during the trace. */
+        mov     #0xF0, r0
+        ldc     r0, sr
+
+        mov.l   .L_master_stack, r15
+
+        mov.l   .L_vbr, r0
+        ldc     r0, vbr
+
+        mov.l   .L_scu_ims, r0
+        mov.l   .L_scu_mask_all, r1
+        mov.l   r1, @r0
+
+        /* The C trace never returns. */
+        mov.l   .L_trace, r0
+        jmp     @r0
+        nop
+
+.align 4
+.L_master_stack:
+        .long   ___master_stack
+.L_vbr:
+        .long   0x06000000
+.L_scu_ims:
+        .long   0x25FE00A0
+.L_scu_mask_all:
+        .long   0x0000BFFF
+.L_trace:
+        .long   _bootstrap_trace

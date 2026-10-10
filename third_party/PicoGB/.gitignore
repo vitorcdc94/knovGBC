@@ -1,0 +1,9 @@
+*.txt
+*.log
+!LICENSE.txt
+*.bin
+*.py
+*.out
+*.exe
+/profi.c
+/profi.h

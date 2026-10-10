@@ -1,0 +1,130 @@
+/*
+ * bootprobe.sx -- deliberately bare SH-2/Saturn boot probe.
+ *
+ * This file has no C runtime, Yaul code, BSS, heap, callbacks or interrupts.
+ * The IP program transfers control directly here at 0x06004000.  It masks
+ * interrupts, establishes the vector base, then repeatedly changes the VDP2
+ * back-screen colour.  A red/blue alternation proves that the 1ST_READ
+ * program is executing independently of Yaul's startup sequence.
+ */
+
+.section .text.start, "ax"
+.align 4
+.global _start
+.type _start, @function
+
+_start:
+        /* Do not accept an interrupt while the Saroo/BIOS state is unknown. */
+        mov     #0xF0, r0
+        ldc     r0, sr
+
+        mov.l   .L_stack, r15
+        mov.l   .L_vbr, r0
+        ldc     r0, vbr
+
+        /* Mask every SCU source as well as CPU interrupts. */
+        mov.l   .L_scu_ims, r0
+        mov     #-1, r1
+        mov.l   r1, @r0
+
+        /* Stop VDP1 output left over from the system program. */
+        mov.l   .L_vdp1_ptmr, r0
+        mov     #0, r1
+        mov.w   r1, @r0
+        mov.l   .L_vdp1_fbcr, r0
+        mov.w   r1, @r0
+        mov.l   .L_vdp1_tvmr, r0
+        mov.w   r1, @r0
+
+        /* Put VDP2 in a known, direct back-screen configuration.  The cycle
+         * values and back-screen address are the same hardware setup used by
+         * the Saroo firmware's own VDP2 initialisation. */
+        mov.l   .L_vdp2_tvmd, r0
+        mov.w   r1, @r0
+
+        mov.l   .L_vdp2_ramctl, r0
+        mov.l   .L_2300, r1
+        mov.w   r1, @r0
+
+        mov.l   .L_vdp2_cyca0l, r0
+        mov.l   .L_0e44, r1
+        mov.w   r1, @r0
+        mov.l   .L_vdp2_cyca0u, r0
+        mov.l   .L_eeee, r1
+        mov.w   r1, @r0
+        mov.l   .L_vdp2_cyca1l, r0
+        mov.l   .L_1e55, r1
+        mov.w   r1, @r0
+        mov.l   .L_vdp2_cyca1u, r0
+        mov.l   .L_eeee, r1
+        mov.w   r1, @r0
+
+        /* Disable all scroll layers. The back screen remains visible. */
+        mov.l   .L_vdp2_bgon, r0
+        mov     #0, r1
+        mov.w   r1, @r0
+
+        /* BKTA = 0x0003FFFF, which points at 0x25E7FFFE. */
+        mov.l   .L_vdp2_bktau, r0
+        mov     #3, r1
+        mov.w   r1, @r0
+        mov.l   .L_vdp2_bktal, r0
+        mov     #-1, r1
+        mov.w   r1, @r0
+
+        /* Turn the display on in 320x224 non-interlaced mode. */
+        mov.l   .L_vdp2_tvmd, r0
+        mov.l   .L_8010, r1
+        mov.w   r1, @r0
+
+.L_colour_loop:
+        /* Opaque red. */
+        mov.l   .L_back_colour, r0
+        mov.l   .L_red, r1
+        mov.w   r1, @r0
+        mov.l   .L_delay, r1
+.L_red_delay:
+        dt      r1
+        bf      .L_red_delay
+
+        /* Opaque blue. */
+        mov.l   .L_back_colour, r0
+        mov.l   .L_blue, r1
+        mov.w   r1, @r0
+        mov.l   .L_delay, r1
+.L_blue_delay:
+        dt      r1
+        bf      .L_blue_delay
+
+        bra     .L_colour_loop
+        nop
+
+.align 4
+.L_stack:        .long 0x060FFFF0
+.L_vbr:          .long 0x06000000
+.L_scu_ims:      .long 0x25FE00A0
+
+.L_vdp1_tvmr:    .long 0x25D00000
+.L_vdp1_fbcr:    .long 0x25D00002
+.L_vdp1_ptmr:    .long 0x25D00004
+
+.L_vdp2_tvmd:    .long 0x25F80000
+.L_vdp2_ramctl:  .long 0x25F8000E
+.L_vdp2_cyca0l:  .long 0x25F80010
+.L_vdp2_cyca0u:  .long 0x25F80012
+.L_vdp2_cyca1l:  .long 0x25F80014
+.L_vdp2_cyca1u:  .long 0x25F80016
+.L_vdp2_bgon:    .long 0x25F80020
+.L_vdp2_bktau:   .long 0x25F800AC
+.L_vdp2_bktal:   .long 0x25F800AE
+.L_back_colour:  .long 0x25E7FFFE
+
+.L_2300:         .long 0x00002300
+.L_0e44:         .long 0x00000E44
+.L_eeee:         .long 0x0000EEEE
+.L_1e55:         .long 0x00001E55
+.L_8010:         .long 0x00008010
+.L_red:          .long 0x0000FC00
+.L_blue:         .long 0x0000801F
+/* About one second at the SH-2 clock; visual proof without any interrupt. */
+.L_delay:        .long 0x00300000

@@ -1,0 +1,29 @@
+/*
+ * Copyright (c)
+ * See LICENSE for details.
+ *
+ * Joe Fenton <jlfenton65@gmail.com>
+ * Israel Jacquez <mrkotfw@gmail.com>
+ */
+
+.text
+.align 4
+
+.global _start
+.type _start, @function
+
+_start:
+        mov #0xF0, r0
+        mov.l .LC1, r15         ! Set stack pointer for master CPU
+        ldc r0, sr              ! Disable interrupts
+        mov.l .LC2, r1
+        jmp @r1                 ! Jump to init
+        nop
+
+.align 4
+
+.LC1:
+.long ___master_stack
+
+.LC2:
+.long ___sys_init

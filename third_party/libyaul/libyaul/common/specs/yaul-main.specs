@@ -1,0 +1,8 @@
+*startfile:
+crt0%O%s init%O%s
+
+*endfile:
+
+
+*lib:
+-lyaul -lgcc
